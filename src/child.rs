@@ -11,7 +11,7 @@ pub async fn create_child(state: &mut AppState, state_path: &PathType, settings:
 
     let mut command = Command::new("npm");
     command
-        .args(&["--prefix", &settings.clone().project_path, "run", "dev"])
+        .args(&["--prefix", &settings.clone().project_path, "run", "start"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
