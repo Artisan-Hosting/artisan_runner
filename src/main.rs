@@ -1,5 +1,5 @@
 use artisan_middleware::{
-    common::log_error,
+    common::{log_error, update_state},
     config::AppConfig,
     log,
     logger::{set_log_level, LogLevel},
@@ -8,7 +8,7 @@ use artisan_middleware::{
     timestamp::current_timestamp,
 };
 use child::{create_child, run_one_shot_process};
-use config::{get_config, specific_config, update_state, wind_down_state};
+use config::{get_config, specific_config,  wind_down_state};
 use dusa_collection_utils::{
     errors::{ErrorArrayItem, Errors},
     rwarc::LockWithTimeout,

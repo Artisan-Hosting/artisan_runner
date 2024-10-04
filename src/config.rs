@@ -1,9 +1,5 @@
 use artisan_middleware::{
-    config::AppConfig,
-    log,
-    logger::LogLevel,
-    state_persistence::{AppState, StatePersistence},
-    timestamp::current_timestamp,
+    common::update_state, config::AppConfig, log, logger::LogLevel, state_persistence::AppState, timestamp::current_timestamp
 };
 use colored::Colorize;
 use config::{Config, ConfigError, File};
@@ -49,19 +45,6 @@ pub fn specific_config() -> Result<AppSpecificConfig, ConfigError> {
     let app_specific: AppSpecificConfig = settings.get("app_specific")?;
 
     Ok(app_specific)
-}
-
-// Update state and persist it to disk
-pub fn update_state(state: &mut AppState, path: &PathType) {
-    state.last_updated = current_timestamp();
-    if let Err(err) = StatePersistence::save_state(state, path) {
-        // log!(LogLevel::Error, "Failed to save state: {}", err);
-        state.is_active = false;
-        state.error_log.push(ErrorArrayItem::new(
-            Errors::GeneralError,
-            format!("{}", err),
-        ));
-    }
 }
 
 #[derive(Debug, Deserialize, Clone)]

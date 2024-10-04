@@ -1,10 +1,10 @@
-use artisan_middleware::{common::log_error, log, logger::LogLevel, state_persistence::AppState};
+use artisan_middleware::{common::{log_error, update_state}, log, logger::LogLevel, state_persistence::AppState};
 use dusa_collection_utils::{errors::ErrorArrayItem, types::PathType};
 use nix::libc;
 use std::process::Stdio;
 use tokio::process::{Child, Command};
 
-use crate::config::{update_state, wind_down_state, AppSpecificConfig};
+use crate::config::{wind_down_state, AppSpecificConfig};
 
 pub async fn create_child(
     state: &mut AppState,
