@@ -11,7 +11,7 @@ pub async fn create_child(state: &mut AppState, state_path: &PathType, settings:
 
     let mut command = Command::new("npm");
     command
-        .args(&["--prefix", &settings.clone().project_path, "run", "build"]) // Updated to run "build" instead of "start"
+        .args(&["--prefix", &settings.clone().project_path, "run", "start"]) // Updated to run "build" instead of "start"
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env("NODE_ENV", "production") // Set NODE_ENV=production
