@@ -1,5 +1,5 @@
 # Variables
-PROJECT_NAME := ais_63c35f4b
+PROJECT_NAME := ais_generic
 PROJECT_DIR := $(CURDIR)
 TARGET_DIR := $(PROJECT_DIR)/target
 RELEASE_DIR := $(TARGET_DIR)/release
