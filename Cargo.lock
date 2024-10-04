@@ -50,6 +50,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ais_63c35f4b"
+version = "1.0.0"
+dependencies = [
+ "artisan_middleware",
+ "colored",
+ "config 0.14.0",
+ "dusa_collection_utils",
+ "nix 0.29.0",
+ "notify",
+ "rand 0.8.5",
+ "rng",
+ "serde",
+ "serde_json",
+ "simple_pretty",
+ "tokio",
+ "toml 0.8.19",
+]
+
+[[package]]
 name = "android-tzdata"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2027,25 +2046,6 @@ checksum = "0a9dde63c78217c24d7f16dc1d60aac012124ba29d7bfa71bda532d4de668f44"
 dependencies = [
  "libc 0.1.12",
  "termios",
-]
-
-[[package]]
-name = "runner_dev"
-version = "1.0.0"
-dependencies = [
- "artisan_middleware",
- "colored",
- "config 0.14.0",
- "dusa_collection_utils",
- "nix 0.29.0",
- "notify",
- "rand 0.8.5",
- "rng",
- "serde",
- "serde_json",
- "simple_pretty",
- "tokio",
- "toml 0.8.19",
 ]
 
 [[package]]

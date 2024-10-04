@@ -11,9 +11,11 @@ pub async fn create_child(state: &mut AppState, state_path: &PathType, settings:
 
     let mut command = Command::new("npm");
     command
-        .args(&["--prefix", &settings.clone().project_path, "run", "start"])
+        .args(&["--prefix", &settings.clone().project_path, "run", "build"]) // Updated to run "build" instead of "start"
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .env("NODE_ENV", "production") // Set NODE_ENV=production
+        .env("PORT", "3000"); // Set PORT=3000
 
     // Set the process to start a new process group
     unsafe {
@@ -47,15 +49,16 @@ pub async fn create_child(state: &mut AppState, state_path: &PathType, settings:
 }
 
 pub async fn run_one_shot_process(settings: &AppSpecificConfig) -> Result<(), String> {
-    // Replace 'npm' and 'install' with the command and arguments you need
+    // Set the environment variable NODE_ENV to "production"
     let output = Command::new("npm")
         .arg("--prefix")
         .arg(settings.clone().project_path)
         .arg("run")
         .arg("build")
+        .env("NODE_ENV", "production")  // Add this line to set NODE_ENV=production
         .output()
         .await
-        .map_err(|err| format!("Failed to execute npm install: {}", err))?;
+        .map_err(|err| format!("Failed to execute npm run build: {}", err))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -65,7 +68,7 @@ pub async fn run_one_shot_process(settings: &AppSpecificConfig) -> Result<(), St
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("npm install failed: {}", stderr));
+        return Err(format!("npm run build failed: {}", stderr));
     }
 
     Ok(())

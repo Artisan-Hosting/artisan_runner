@@ -1,11 +1,11 @@
 [Unit]
-Description=Runner Dev Service
+Description=63c35f4b Service
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/runner_dev
-WorkingDirectory=/etc/runner_dev
+ExecStart=/usr/local/bin/ais_63c35f4b
+WorkingDirectory=/etc/ais_63c35f4b
 Restart=on-failure
 RestartSec=5
 User=root
