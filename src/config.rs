@@ -82,12 +82,17 @@ impl AppSpecificConfig {
             std::process::exit(0)
         } else {
             match path.canonicalize() {
-                Ok(canon_path) => PathType::PathBuf(canon_path) ,
+                Ok(canon_path) => PathType::PathBuf(canon_path),
                 Err(e) => {
-                    log!(LogLevel::Error, "Failed to canonicalize path: {}, using default: {}", e, path);
+                    log!(
+                        LogLevel::Error,
+                        "Failed to canonicalize path: {}, using default: {}",
+                        e,
+                        path
+                    );
                     path
-                },
-            }             
+                }
+            }
         }
     }
     pub fn project_path(&self) -> PathType {
@@ -98,12 +103,17 @@ impl AppSpecificConfig {
             std::process::exit(0)
         } else {
             match path.canonicalize() {
-                Ok(canon_path) => PathType::PathBuf(canon_path) ,
+                Ok(canon_path) => PathType::PathBuf(canon_path),
                 Err(e) => {
-                    log!(LogLevel::Error, "Failed to canonicalize path: {}, using default: {}", e, path);
+                    log!(
+                        LogLevel::Error,
+                        "Failed to canonicalize path: {}, using default: {}",
+                        e,
+                        path
+                    );
                     path
-                },
-            }             
+                }
+            }
         }
     }
 }

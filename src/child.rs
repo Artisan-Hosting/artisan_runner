@@ -6,7 +6,11 @@ use tokio::process::{Child, Command};
 
 use crate::config::{update_state, wind_down_state, AppSpecificConfig};
 
-pub async fn create_child(state: &mut AppState, state_path: &PathType, settings: &AppSpecificConfig) -> Child {
+pub async fn create_child(
+    state: &mut AppState,
+    state_path: &PathType,
+    settings: &AppSpecificConfig,
+) -> Child {
     log!(LogLevel::Trace, "Creating child process...");
 
     let mut command = Command::new("npm");
@@ -55,7 +59,7 @@ pub async fn run_one_shot_process(settings: &AppSpecificConfig) -> Result<(), St
         .arg(settings.clone().project_path)
         .arg("run")
         .arg("build")
-        .env("NODE_ENV", "production")  // Add this line to set NODE_ENV=production
+        .env("NODE_ENV", "production") // Add this line to set NODE_ENV=production
         .output()
         .await
         .map_err(|err| format!("Failed to execute npm run build: {}", err))?;
