@@ -3,6 +3,7 @@
         "canonicalize",
         "killpg",
         "pgid",
-        "setpgid"
+        "setpgid",
+        "sigusr"
     ]
 }
