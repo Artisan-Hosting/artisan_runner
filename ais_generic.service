@@ -4,6 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
+KillMode=process
 ExecStart=/usr/local/bin/ais_generic
 WorkingDirectory=/etc/ais_generic
 Restart=on-failure
