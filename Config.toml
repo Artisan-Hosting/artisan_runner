@@ -1,5 +1,5 @@
 [app_specific]
 interval_seconds = "30"
-monitor_path = "./"
-project_path = "./"
+monitor_path = "/var/www/ais/63c35f4b/src"
+project_path = "/var/www/ais/63c35f4b/"
 changes_needed = "10" # Guess config for now 

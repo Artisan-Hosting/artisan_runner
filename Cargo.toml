@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-artisan_middleware = "1.5.4"
+artisan_middleware = "1.6.1"
 config = "0.14.0"
 dusa_collection_utils = "2.6.6"
 serde = "1.0.210"

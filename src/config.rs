@@ -1,12 +1,7 @@
-use artisan_middleware::{
-    common::update_state, config::AppConfig, log, logger::LogLevel, state_persistence::AppState, timestamp::current_timestamp
-};
+use artisan_middleware::{config::AppConfig, log, logger::LogLevel};
 use colored::Colorize;
 use config::{Config, ConfigError, File};
-use dusa_collection_utils::{
-    errors::{ErrorArrayItem, Errors},
-    types::PathType,
-};
+use dusa_collection_utils::types::PathType;
 use serde::Deserialize;
 use std::fmt;
 
@@ -24,17 +19,6 @@ pub fn get_config() -> AppConfig {
     config.aggregator = None;
     config.git = None;
     config
-}
-
-pub fn wind_down_state(state: &mut AppState, state_path: &PathType) {
-    state.is_active = false;
-    state.data = String::from("Terminated");
-    state.last_updated = current_timestamp();
-    state.error_log.push(ErrorArrayItem::new(
-        Errors::GeneralError,
-        "Wind down requested check logs".to_owned(),
-    ));
-    update_state(state, &state_path);
 }
 
 pub fn specific_config() -> Result<AppSpecificConfig, ConfigError> {
