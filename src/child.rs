@@ -2,12 +2,12 @@ use artisan_middleware::{
     common::{log_error, wind_down_state},
     log,
     logger::LogLevel,
-    process_manager::ProcessManager,
+    process_manager::{spawn_complex_process, SupervisedChild},
     state_persistence::AppState,
 };
 use dusa_collection_utils::{errors::ErrorArrayItem, types::PathType};
-use std::{fs, process::Stdio};
-use tokio::process::{Child, Command};
+use std::{ffi::c_int, fs, process::Stdio};
+use tokio::process::Command;
 
 use crate::config::AppSpecificConfig;
 
@@ -15,7 +15,7 @@ pub async fn create_child(
     mut state: &mut AppState,
     state_path: &PathType,
     settings: &AppSpecificConfig,
-) -> Child {
+) -> SupervisedChild {
     log!(LogLevel::Trace, "Creating child process...");
 
     let mut command = Command::new("npm");
@@ -27,21 +27,35 @@ pub async fn create_child(
         .env("NODE_ENV", "production") // Set NODE_ENV=production
         .env("PORT", "3080"); // Set PORT=3000
 
-    match ProcessManager::spawn_complex_process(command, true, true, state, state_path).await {
+    match spawn_complex_process(command, true, true).await {
         Ok(spawned_child) => {
+            // initialize monitor loop.
+            spawned_child.monitor_usage().await;
             // read the pid from the state
-            let pid: u32 = state.data.replace("PID: ", "").parse::<u32>().unwrap();
+            let pid: u32 = match spawned_child.get_pid().await {
+                Ok(xid) => xid,
+                Err(_) => {
+                    let error_item = ErrorArrayItem::new(
+                        dusa_collection_utils::errors::Errors::InputOutput,
+                        "No pid for supervised child".to_owned(),
+                    );
+                    log_error(state, error_item, &state_path);
+                    wind_down_state(state, &state_path);
+                    std::process::exit(100);
+                }
+            };
 
             // save the pid somewhere
-            let pid_file: PathType = PathType::Content(format!("/tmp/.{}_pg.pid", state.config.app_name));
-            
+            let pid_file: PathType =
+                PathType::Content(format!("/tmp/.{}_pg.pid", state.config.app_name));
+
             if let Err(error) = fs::write(pid_file, pid.to_string()) {
                 let error_ref = error.get_ref().unwrap_or_else(|| {
                     log!(LogLevel::Trace, "{:?}", error);
                     wind_down_state(state, state_path);
                     std::process::exit(100);
                 });
-    
+
                 let error_item = ErrorArrayItem::new(
                     dusa_collection_utils::errors::Errors::InputOutput,
                     error_ref.to_string(),
@@ -54,21 +68,7 @@ pub async fn create_child(
             return spawned_child;
         }
         Err(error) => {
-            let error_ref = error.get_ref().unwrap_or_else(|| {
-                log!(LogLevel::Trace, "{:?}", error);
-                log!(
-                    LogLevel::Error,
-                    "Child failed to spawn and we couldn't unpack why"
-                );
-                wind_down_state(state, state_path);
-                std::process::exit(100);
-            });
-
-            let error_item = ErrorArrayItem::new(
-                dusa_collection_utils::errors::Errors::InputOutput,
-                error_ref.to_string(),
-            );
-            log_error(&mut state, error_item, &state_path);
+            log_error(&mut state, error, &state_path);
             wind_down_state(&mut state, &state_path);
             std::process::exit(100);
         }
@@ -100,3 +100,25 @@ pub async fn run_one_shot_process(settings: &AppSpecificConfig) -> Result<(), St
 
     Ok(())
 }
+
+pub fn _get_pid(state: &mut AppState) -> Result<c_int, ErrorArrayItem>{
+    let pid_file: PathType =
+    PathType::Content(format!("/tmp/.{}_pg.pid", state.config.app_name));
+
+
+    let data = match fs::read_to_string(pid_file) {
+        Ok(data) => data.trim_end().replace(" ", ""),
+        Err(err) => return Err(ErrorArrayItem::from(err)),
+    };
+
+    let pid_number = match data.parse::<c_int>() {
+        Ok(int) => int,
+        Err(err) => return Err(ErrorArrayItem::from(err)),
+    };
+
+    Ok(pid_number)
+}
+
+
+
+// .parse::<c_int>() 
