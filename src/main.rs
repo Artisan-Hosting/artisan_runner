@@ -1,17 +1,20 @@
 use artisan_middleware::{
     common::{log_error, update_state, wind_down_state},
     config::AppConfig,
-    log,
-    logger::{set_log_level, LogLevel},
     process_manager::SupervisedChild,
     state_persistence::{AppState, StatePersistence},
     timestamp::current_timestamp,
 };
+// use child::{create_child, run_one_shot_process};
 use child::{create_child, run_one_shot_process};
 use config::{get_config, specific_config};
 use dusa_collection_utils::{
     errors::{ErrorArrayItem, Errors},
     types::PathType,
+};
+use dusa_collection_utils::{
+    log,
+    log::{set_log_level, LogLevel},
 };
 use monitor::monitor_directory;
 use signals::{sighup_watch, sigusr_watch};
@@ -52,7 +55,7 @@ async fn main() {
 
     // Setting up the state of the application
     log!(LogLevel::Trace, "Setting up the application state...");
-    let mut state: AppState = match StatePersistence::load_state(&state_path) {
+    let mut state: AppState = match StatePersistence::load_state(&state_path).await {
         Ok(mut loaded_data) => {
             log!(LogLevel::Info, "Loaded previous state data");
             log!(LogLevel::Trace, "Previous state data: {:#?}", loaded_data);
@@ -63,28 +66,32 @@ async fn main() {
             loaded_data.config.log_level = config.log_level;
             set_log_level(loaded_data.config.log_level);
             loaded_data.error_log.clear();
-            update_state(&mut loaded_data, &state_path);
+            update_state(&mut loaded_data, &state_path, None).await;
             loaded_data
         }
         Err(e) => {
             log!(LogLevel::Warn, "No previous state loaded, creating new one");
             log!(LogLevel::Debug, "Error loading previous state: {}", e);
             let mut state = AppState {
+                name: env!("CARGO_PKG_NAME").to_string(),
                 data: String::new(),
                 last_updated: current_timestamp(),
                 event_counter: 0,
                 is_active: false,
                 error_log: vec![],
                 config: config.clone(),
+                version: serde_json::from_str(&config.version)
+                    .expect("Failed to parse version data"),
+                system_application: false,
             };
             state.is_active = false;
-            state.data = String::from("Initializing");
+            state.data = String::from("Initializing in degraded state");
             state.config.debug_mode = config.debug_mode;
             state.last_updated = current_timestamp();
             state.config.log_level = config.log_level;
             set_log_level(state.config.log_level);
             state.error_log.clear();
-            update_state(&mut state, &state_path);
+            update_state(&mut state, &state_path, None).await;
 
             state
         }
@@ -99,7 +106,7 @@ async fn main() {
 
     log!(LogLevel::Trace, "Setting state as active...");
     state.is_active = true;
-    update_state(&mut state, &state_path);
+    update_state(&mut state, &state_path, None).await;
 
     if config.debug_mode {
         log!(LogLevel::Info, "Application State: {}", state);
@@ -120,7 +127,7 @@ async fn main() {
     if let Err(err) = run_one_shot_process(&settings).await {
         log!(LogLevel::Error, "One-shot process failed: {}", err);
         let error = ErrorArrayItem::new(Errors::GeneralError, err);
-        log_error(&mut state, error, &state_path);
+        log_error(&mut state, error, &state_path).await;
         return;
     }
 
@@ -133,12 +140,12 @@ async fn main() {
             let xid: u32 = child.clone().await.get_pid().await.unwrap();
             log!(LogLevel::Info, "Child spawned: {}", xid);
             state.data = format!("Child spawned: {}", xid);
-            update_state(&mut state, &state_path);
+            update_state(&mut state, &state_path, None).await;
         }
         false => {
             log!(LogLevel::Error, "Failed to spawn child process");
             let error = ErrorArrayItem::new(Errors::GeneralError, "child not spawned".to_string());
-            log_error(&mut state, error, &state_path);
+            log_error(&mut state, error, &state_path).await;
             std::process::exit(100);
         }
     }
@@ -148,21 +155,20 @@ async fn main() {
 
     // Start monitoring the directory and get the asynchronous receiver
     log!(LogLevel::Trace, "Starting directory monitoring...");
-    let mut event_rx = match monitor_directory(settings.safe_path()).await {
+    let mut event_rx = match monitor_directory(settings.safe_path(), settings.ignored_paths()).await {
         Ok(receiver) => {
             log!(LogLevel::Trace, "Successfully started directory monitoring");
             receiver
         }
         Err(err) => {
             log!(LogLevel::Error, "Watcher error: {}", err);
-            wind_down_state(&mut state, &state_path);
+            wind_down_state(&mut state, &state_path).await;
             std::process::exit(0);
         }
     };
 
     log!(LogLevel::Trace, "Entering main loop...");
     loop {
-        child.monitor.print_usage().await;
         tokio::select! {
             Some(event) = event_rx.recv() => {
                 log!(LogLevel::Trace, "Received directory change event: {:?}", event);
@@ -173,7 +179,7 @@ async fn main() {
                 if change_count >= trigger_count {
                     log!(LogLevel::Info, "Reached {} changes, handling event", trigger_count);
                     state.event_counter += 1;
-                    update_state(&mut state, &state_path);
+                    update_state(&mut state, &state_path, None).await;
                     log!(LogLevel::Info, "Killing the child");
 
                     match child.clone().await.kill().await {
@@ -184,7 +190,7 @@ async fn main() {
                         },
                         Err(error) => {
                             log!(LogLevel::Error, "Failed to wait for child process termination: {}", error);
-                            log_error(&mut state, error, &state_path);
+                            log_error(&mut state, error, &state_path).await;
                         },
                     }
 
@@ -197,24 +203,40 @@ async fn main() {
                 if !child.clone().await.running().await {
                     log!(LogLevel::Warn, "Child process {:?} is not running. Restarting...", child.get_pid().await);
 
+                    if let Ok(_) = child.kill().await {
+                        log!(LogLevel::Info, "Executed the previous child")
+                    }
+
                     if let Err(err) = run_one_shot_process(&settings).await {
                         log!(LogLevel::Error, "One-shot process failed: {}", err);
                         let error = ErrorArrayItem::new(Errors::GeneralError, err);
-                        log_error(&mut state, error, &state_path);
+                        log_error(&mut state, error, &state_path).await;
                         return;
                     }
 
                     log!(LogLevel::Info, "One shot finished, Spawning new child");
 
                     child = create_child(&mut state, &state_path, &settings).await;
-                    log!(LogLevel::Info, "New child process spawned.");
+                    let message = "New child process spawned";
+                    
+                    log!(LogLevel::Info, "{message}");
+                    state.data = message.to_string();
+                    update_state(&mut state, &state_path, None).await;
                 }
 
 
                 // Update state as needed
                 state.is_active = true;
                 state.data = String::from("Nominal");
-                update_state(&mut state, &state_path);
+                if let Ok(metrics) = child.get_metrics().await {
+                    update_state(&mut state, &state_path, Some(metrics)).await;
+                } else {
+                    state.data = String::from("Failed to get metric data");
+                    state.error_log.push(ErrorArrayItem::new(Errors::GeneralError, "Failed to get metric data from the child".to_string()));
+                    update_state(&mut state, &state_path, None).await;
+                }
+
+
             }
         }
 
@@ -225,7 +247,7 @@ async fn main() {
             config = get_config();
 
             // Updating state data
-            state = match StatePersistence::load_state(&state_path) {
+            state = match StatePersistence::load_state(&state_path).await {
                 Ok(mut loaded_data) => {
                     log!(LogLevel::Info, "Reloading state data");
                     loaded_data.is_active = true;
@@ -235,19 +257,23 @@ async fn main() {
                     loaded_data.config.log_level = config.log_level;
                     set_log_level(loaded_data.config.log_level);
                     loaded_data.error_log.clear();
-                    update_state(&mut loaded_data, &state_path);
+                    update_state(&mut loaded_data, &state_path, None).await;
                     loaded_data
                 }
                 Err(e) => {
                     log!(LogLevel::Warn, "No previous state loaded, creating new one");
                     log!(LogLevel::Debug, "Error loading previous state: {}", e);
                     let mut state = AppState {
+                        name: env!("CARGO_PKG_NAME").to_string(),
                         data: String::new(),
                         last_updated: current_timestamp(),
                         event_counter: 0,
                         is_active: false,
                         error_log: vec![],
                         config: config.clone(),
+                        version: serde_json::from_str(&config.version)
+                            .expect("Failed to parse version data"),
+                        system_application: false,
                     };
                     state.is_active = false;
                     state.data = String::from("Initializing");
@@ -256,16 +282,16 @@ async fn main() {
                     state.config.log_level = config.log_level;
                     set_log_level(state.config.log_level);
                     state.error_log.clear();
-                    update_state(&mut state, &state_path);
-
+                    update_state(&mut state, &state_path, None).await;
+        
                     state
                 }
             };
 
             // Killing and redrawing the process
             if let Err(err) = child.kill().await {
-                log_error(&mut state, err, &state_path);
-                wind_down_state(&mut state, &state_path);
+                log_error(&mut state, err, &state_path).await;
+                wind_down_state(&mut state, &state_path).await;
                 // We're in a weird state kys and let systemd try again.
                 std::process::exit(100)
             }
@@ -274,7 +300,7 @@ async fn main() {
             if let Err(err) = run_one_shot_process(&settings).await {
                 log!(LogLevel::Error, "One-shot process failed: {}", err);
                 let error = ErrorArrayItem::new(Errors::GeneralError, err);
-                log_error(&mut state, error, &state_path);
+                log_error(&mut state, error, &state_path).await;
                 return;
             }
 
@@ -288,8 +314,8 @@ async fn main() {
         if exit_graceful.load(Ordering::Relaxed) {
             log!(LogLevel::Debug, "Exiting gracefully");
             if let Err(err) = child.kill().await {
-                log_error(&mut state, err, &state_path);
-                wind_down_state(&mut state, &state_path);
+                log_error(&mut state, err, &state_path).await;
+                wind_down_state(&mut state, &state_path).await;
                 std::process::exit(100)
             }
             std::process::exit(0)

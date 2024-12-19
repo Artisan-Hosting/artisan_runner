@@ -1,11 +1,10 @@
 use artisan_middleware::{
-    common::{log_error, wind_down_state},
-    log,
-    logger::LogLevel,
+    common::{log_error, update_state, wind_down_state},
     process_manager::{spawn_complex_process, SupervisedChild},
     state_persistence::AppState,
 };
-use dusa_collection_utils::{errors::ErrorArrayItem, types::PathType};
+use dusa_collection_utils::{errors::ErrorArrayItem, log, types::PathType};
+use dusa_collection_utils::log::LogLevel;
 use std::{ffi::c_int, fs, process::Stdio};
 use tokio::process::Command;
 
@@ -27,7 +26,8 @@ pub async fn create_child(
         .env("NODE_ENV", "production") // Set NODE_ENV=production
         .env("PORT", "3080"); // Set PORT=3000
 
-    match spawn_complex_process(command, true, true).await {
+
+    match spawn_complex_process(command, false, true).await { //TODO change this back
         Ok(spawned_child) => {
             // initialize monitor loop.
             spawned_child.monitor_usage().await;
@@ -39,8 +39,8 @@ pub async fn create_child(
                         dusa_collection_utils::errors::Errors::InputOutput,
                         "No pid for supervised child".to_owned(),
                     );
-                    log_error(state, error_item, &state_path);
-                    wind_down_state(state, &state_path);
+                    log_error(state, error_item, &state_path).await;
+                    wind_down_state(state, &state_path).await;
                     std::process::exit(100);
                 }
             };
@@ -52,7 +52,6 @@ pub async fn create_child(
             if let Err(error) = fs::write(pid_file, pid.to_string()) {
                 let error_ref = error.get_ref().unwrap_or_else(|| {
                     log!(LogLevel::Trace, "{:?}", error);
-                    wind_down_state(state, state_path);
                     std::process::exit(100);
                 });
 
@@ -60,21 +59,25 @@ pub async fn create_child(
                     dusa_collection_utils::errors::Errors::InputOutput,
                     error_ref.to_string(),
                 );
-                log_error(&mut state, error_item, &state_path);
-                wind_down_state(&mut state, &state_path);
+                log_error(&mut state, error_item, &state_path).await;
+                wind_down_state(&mut state, &state_path).await;
                 std::process::exit(100);
             }
             log!(LogLevel::Info, "Child process spawned, pid info saved");
+
+            if let Ok(metrics) = spawned_child.get_metrics().await {
+                update_state(&mut state, &state_path, Some(metrics)).await;
+            }
             return spawned_child;
         }
         Err(error) => {
-            log_error(&mut state, error, &state_path);
-            wind_down_state(&mut state, &state_path);
+            log_error(&mut state, error, &state_path).await;
+            wind_down_state(&mut state, &state_path).await;
             std::process::exit(100);
         }
     }
 }
-
+ 
 pub async fn run_one_shot_process(settings: &AppSpecificConfig) -> Result<(), String> {
     // Set the environment variable NODE_ENV to "production"
     let output = Command::new("npm")
@@ -82,7 +85,7 @@ pub async fn run_one_shot_process(settings: &AppSpecificConfig) -> Result<(), St
         .arg(settings.clone().project_path)
         .arg("run")
         .arg("build")
-        .env("NODE_ENV", "production") // Add this line to set NODE_ENV=production
+        .env("NODE_ENV", "production") 
         .output()
         .await
         .map_err(|err| format!("Failed to execute npm run build: {}", err))?;
@@ -95,7 +98,7 @@ pub async fn run_one_shot_process(settings: &AppSpecificConfig) -> Result<(), St
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("npm run build failed: {}", stderr));
+        return Err(format!("Oneshot process failed: {}", stderr));
     }
 
     Ok(())

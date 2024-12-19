@@ -1,5 +1,7 @@
 [app_specific]
 interval_seconds = "30"
-monitor_path = "/var/www/ais/63c35f4b/src"
-project_path = "/var/www/ais/63c35f4b/"
+monitor_path = "/tmp/Mitobyte"
+project_path = "/tmp/Mitobyte"
+#project_path = "/tmp/test"
 changes_needed = "10" # Guess config for now 
+ignored_subdirs = [".git", ".github", ".next", "broken_path"]
