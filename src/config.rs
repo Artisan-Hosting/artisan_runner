@@ -1,11 +1,10 @@
 use artisan_middleware::{
-    config::AppConfig,
-    version::{aml_version, str_to_version},
+    common::update_state, config::AppConfig, state_persistence::{AppState, StatePersistence}, timestamp::current_timestamp, version::{aml_version, str_to_version}
 };
 use colored::Colorize;
 use config::{Config, ConfigError, File};
 use dusa_collection_utils::{
-    log::LogLevel, stringy::Stringy, types::PathType, version::{SoftwareVersion, Version, VersionCode},
+    log::{set_log_level, LogLevel}, stringy::Stringy, types::PathType, version::{SoftwareVersion, Version, VersionCode},
 };
 use dusa_collection_utils::log;
 use serde::Deserialize;
@@ -19,7 +18,7 @@ pub fn get_config() -> AppConfig {
             std::process::exit(100)
         }
     };
-    config.app_name = Stringy::from_string(env!("CARGO_PKG_NAME").to_string());
+    config.app_name = Stringy::from(env!("CARGO_PKG_NAME").to_string());
 
     let raw_version: SoftwareVersion = {
         // defining the version
@@ -151,3 +150,54 @@ impl fmt::Display for AppSpecificConfig {
         )
     }
 }
+
+pub async fn generate_application_state(state_path: &PathType, config: &AppConfig) -> AppState {
+    match StatePersistence::load_state(&state_path).await {
+        Ok(mut loaded_data) => {
+            log!(LogLevel::Info, "Loaded previous state data");
+            log!(LogLevel::Trace, "Previous state data: {:#?}", loaded_data);
+            loaded_data.is_active = false;
+            loaded_data.data = String::from("Initializing");
+            loaded_data.config.debug_mode = config.debug_mode;
+            loaded_data.event_counter = 0;
+            loaded_data.last_updated = current_timestamp();
+            loaded_data.config.log_level = config.log_level;
+            loaded_data.config.max_cpu_usage = config.max_cpu_usage;
+            loaded_data.config.max_ram_usage = config.max_ram_usage;
+            loaded_data.config.version = config.version.clone();
+            set_log_level(loaded_data.config.log_level);
+            loaded_data.error_log.clear();
+            update_state(&mut loaded_data, &state_path, None).await;
+            loaded_data
+        }
+        Err(e) => {
+            log!(LogLevel::Warn, "No previous state loaded, creating new one");
+            log!(LogLevel::Debug, "Error loading previous state: {}", e);
+            let mut state = AppState {
+                name: env!("CARGO_PKG_NAME").to_string(),
+                data: String::new(),
+                last_updated: current_timestamp(),
+                event_counter: 0,
+                is_active: false,
+                error_log: vec![],
+                config: config.clone(),
+                version: serde_json::from_str(&config.version)
+                    .expect("Failed to parse version data"),
+                system_application: false,
+            };
+            state.is_active = false;
+            state.data = String::from("Initializing in degraded state");
+            state.config.debug_mode = config.debug_mode;
+            state.last_updated = current_timestamp();
+            state.config.log_level = config.log_level;
+            state.config.max_cpu_usage = config.max_cpu_usage;
+            state.config.max_ram_usage = config.max_ram_usage;
+            state.event_counter = 0;
+            set_log_level(state.config.log_level);
+            state.error_log.clear();
+            update_state(&mut state, &state_path, None).await;
+
+            state
+        }
+    }
+} 

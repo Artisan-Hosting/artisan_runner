@@ -3,18 +3,17 @@ use artisan_middleware::{
     config::AppConfig,
     process_manager::SupervisedChild,
     state_persistence::{AppState, StatePersistence},
-    timestamp::current_timestamp,
 };
 // use child::{create_child, run_one_shot_process};
 use child::{create_child, run_one_shot_process};
-use config::{get_config, specific_config};
+use config::{generate_application_state, get_config, specific_config};
 use dusa_collection_utils::{
     errors::{ErrorArrayItem, Errors},
     types::PathType,
 };
 use dusa_collection_utils::{
     log,
-    log::{set_log_level, LogLevel},
+    log::LogLevel,
 };
 use monitor::monitor_directory;
 use signals::{sighup_watch, sigusr_watch};
@@ -55,47 +54,7 @@ async fn main() {
 
     // Setting up the state of the application
     log!(LogLevel::Trace, "Setting up the application state...");
-    let mut state: AppState = match StatePersistence::load_state(&state_path).await {
-        Ok(mut loaded_data) => {
-            log!(LogLevel::Info, "Loaded previous state data");
-            log!(LogLevel::Trace, "Previous state data: {:#?}", loaded_data);
-            loaded_data.is_active = false;
-            loaded_data.data = String::from("Initializing");
-            loaded_data.config.debug_mode = config.debug_mode;
-            loaded_data.last_updated = current_timestamp();
-            loaded_data.config.log_level = config.log_level;
-            set_log_level(loaded_data.config.log_level);
-            loaded_data.error_log.clear();
-            update_state(&mut loaded_data, &state_path, None).await;
-            loaded_data
-        }
-        Err(e) => {
-            log!(LogLevel::Warn, "No previous state loaded, creating new one");
-            log!(LogLevel::Debug, "Error loading previous state: {}", e);
-            let mut state = AppState {
-                name: env!("CARGO_PKG_NAME").to_string(),
-                data: String::new(),
-                last_updated: current_timestamp(),
-                event_counter: 0,
-                is_active: false,
-                error_log: vec![],
-                config: config.clone(),
-                version: serde_json::from_str(&config.version)
-                    .expect("Failed to parse version data"),
-                system_application: false,
-            };
-            state.is_active = false;
-            state.data = String::from("Initializing in degraded state");
-            state.config.debug_mode = config.debug_mode;
-            state.last_updated = current_timestamp();
-            state.config.log_level = config.log_level;
-            set_log_level(state.config.log_level);
-            state.error_log.clear();
-            update_state(&mut state, &state_path, None).await;
-
-            state
-        }
-    };
+    let mut state: AppState = generate_application_state(&state_path, &config).await;
 
     // Listening for the sighup
     let reload: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
@@ -224,15 +183,24 @@ async fn main() {
                     update_state(&mut state, &state_path, None).await;
                 }
 
+                if state.error_log.len() >= 3 { // * Change this limit dependent on the project
+                    state.error_log.remove(0);
+                    state.error_log.dedup();
+                }
 
                 // Update state as needed
                 state.is_active = true;
                 state.data = String::from("Nominal");
                 if let Ok(metrics) = child.get_metrics().await {
+                    // Ensuring we are within the specified limits
+                    if metrics.memory_usage >= state.config.max_ram_usage as f32 {
+                        state.error_log.push(ErrorArrayItem::new(Errors::OverRamLimit, "Application has exceeded ram limit"))
+                    }
+
                     update_state(&mut state, &state_path, Some(metrics)).await;
                 } else {
                     state.data = String::from("Failed to get metric data");
-                    state.error_log.push(ErrorArrayItem::new(Errors::GeneralError, "Failed to get metric data from the child".to_string()));
+                    state.error_log.push(ErrorArrayItem::new(Errors::GeneralError, "Failed to get metric data from the child"));
                     update_state(&mut state, &state_path, None).await;
                 }
 
@@ -247,46 +215,7 @@ async fn main() {
             config = get_config();
 
             // Updating state data
-            state = match StatePersistence::load_state(&state_path).await {
-                Ok(mut loaded_data) => {
-                    log!(LogLevel::Info, "Reloading state data");
-                    loaded_data.is_active = true;
-                    loaded_data.data = String::from("Reloading");
-                    loaded_data.config.debug_mode = config.debug_mode;
-                    loaded_data.last_updated = current_timestamp();
-                    loaded_data.config.log_level = config.log_level;
-                    set_log_level(loaded_data.config.log_level);
-                    loaded_data.error_log.clear();
-                    update_state(&mut loaded_data, &state_path, None).await;
-                    loaded_data
-                }
-                Err(e) => {
-                    log!(LogLevel::Warn, "No previous state loaded, creating new one");
-                    log!(LogLevel::Debug, "Error loading previous state: {}", e);
-                    let mut state = AppState {
-                        name: env!("CARGO_PKG_NAME").to_string(),
-                        data: String::new(),
-                        last_updated: current_timestamp(),
-                        event_counter: 0,
-                        is_active: false,
-                        error_log: vec![],
-                        config: config.clone(),
-                        version: serde_json::from_str(&config.version)
-                            .expect("Failed to parse version data"),
-                        system_application: false,
-                    };
-                    state.is_active = false;
-                    state.data = String::from("Initializing");
-                    state.config.debug_mode = config.debug_mode;
-                    state.last_updated = current_timestamp();
-                    state.config.log_level = config.log_level;
-                    set_log_level(state.config.log_level);
-                    state.error_log.clear();
-                    update_state(&mut state, &state_path, None).await;
-        
-                    state
-                }
-            };
+            state = generate_application_state(&state_path, &config).await;
 
             // Killing and redrawing the process
             if let Err(err) = child.kill().await {

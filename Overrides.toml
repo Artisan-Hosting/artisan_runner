@@ -1,5 +1,10 @@
+# Enviornmentals
 debug_mode = true
 log_level = "Trace"
+
+# Resouce limits
+max_ram_usage = 500 # in mb
+max_cpu_usage = 15
 
 [git]
 default_server = "GitHub"
