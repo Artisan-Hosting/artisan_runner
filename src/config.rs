@@ -1,12 +1,12 @@
 use artisan_middleware::{
-    common::update_state, config::AppConfig, log, logger::LogLevel, state_persistence::AppState, timestamp::current_timestamp
+    common::update_state, config::AppConfig, state_persistence::{AppState, StatePersistence}, timestamp::current_timestamp, version::{aml_version, str_to_version}
 };
 use colored::Colorize;
 use config::{Config, ConfigError, File};
 use dusa_collection_utils::{
-    errors::{ErrorArrayItem, Errors},
-    types::PathType,
+    log::{set_log_level, LogLevel}, stringy::Stringy, types::PathType, version::{SoftwareVersion, Version, VersionCode},
 };
+use dusa_collection_utils::log;
 use serde::Deserialize;
 use std::fmt;
 
@@ -15,36 +15,32 @@ pub fn get_config() -> AppConfig {
         Ok(loaded_data) => loaded_data,
         Err(e) => {
             log!(LogLevel::Error, "Couldn't load config: {}", e.to_string());
-            std::process::exit(0)
+            std::process::exit(100)
         }
     };
-    config.app_name = env!("CARGO_PKG_NAME").to_string();
-    config.version = env!("CARGO_PKG_VERSION").to_string();
+    config.app_name = Stringy::from(env!("CARGO_PKG_NAME").to_string());
+
+    let raw_version: SoftwareVersion = {
+        // defining the version
+        let library_version: Version = aml_version();
+        let software_version: Version = str_to_version(env!("CARGO_PKG_VERSION"), Some(VersionCode::Production));
+        
+        SoftwareVersion {
+            application: software_version,
+            library: library_version,
+        }
+    };
+
+    config.version = match serde_json::to_string(&raw_version) {
+        Ok(ver) => ver,
+        Err(err) => {
+            log!(LogLevel::Error, "{}", err);
+            std::process::exit(100);
+        },
+    };
+
     config.database = None;
-    config.aggregator = None;
-    config.git = None;
     config
-}
-
-pub fn wind_down_state(state: &mut AppState, state_path: &PathType) {
-    state.is_active = false;
-    state.data = String::from("Terminated");
-    state.last_updated = current_timestamp();
-    state.error_log.push(ErrorArrayItem::new(
-        Errors::GeneralError,
-        "Wind down requested check logs".to_owned(),
-    ));
-    update_state(state, &state_path);
-}
-
-pub fn specific_config() -> Result<AppSpecificConfig, ConfigError> {
-    let mut builder = Config::builder();
-    builder = builder.add_source(File::with_name("Config").required(false));
-
-    let settings = builder.build()?;
-    let app_specific: AppSpecificConfig = settings.get("app_specific")?;
-
-    Ok(app_specific)
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -53,6 +49,7 @@ pub struct AppSpecificConfig {
     pub monitor_path: String,
     pub project_path: String,
     pub changes_needed: i32,
+    pub ignored_subdirs: Vec<String>, // Add ignored subdirectories as strings
 }
 
 #[allow(dead_code)]
@@ -78,6 +75,7 @@ impl AppSpecificConfig {
             }
         }
     }
+
     pub fn project_path(&self) -> PathType {
         let self_cloned = self.clone();
         let path = PathType::Content(self_cloned.project_path);
@@ -99,6 +97,32 @@ impl AppSpecificConfig {
             }
         }
     }
+
+    /// Converts ignored_subdirs strings into PathType objects relative to the monitor_path
+    pub fn ignored_paths(&self) -> Option<Vec<PathType>> {
+        let base_path = self.safe_path(); // Canonicalize the monitor path
+        
+        let sub_dirs: Vec<PathType> = self.ignored_subdirs
+            .iter()
+            .map(|subdir| PathType::PathBuf(base_path.join(subdir))) // Join each subdir to the base path
+            .collect();
+
+        if sub_dirs.is_empty() {
+            return None
+        }
+
+        return Some(sub_dirs)
+    }
+}
+
+pub fn specific_config() -> Result<AppSpecificConfig, ConfigError> {
+    let mut builder = Config::builder();
+    builder = builder.add_source(File::with_name("Config").required(false));
+
+    let settings = builder.build()?;
+    let app_specific: AppSpecificConfig = settings.get("app_specific")?;
+
+    Ok(app_specific)
 }
 
 impl fmt::Display for AppSpecificConfig {
@@ -106,6 +130,7 @@ impl fmt::Display for AppSpecificConfig {
         write!(
             f,
             "{} {{\n\
+             \t{}: {},\n\
              \t{}: {},\n\
              \t{}: {},\n\
              \t{}: {},\n\
@@ -119,7 +144,60 @@ impl fmt::Display for AppSpecificConfig {
             "project_path".yellow(),
             self.project_path.clone().green(),
             "changes_needed".yellow(),
-            self.changes_needed.to_string().green()
+            self.changes_needed.to_string().green(),
+            "Ignored_directories".yellow(),
+            self.ignored_subdirs.join(" ").green()
         )
     }
 }
+
+pub async fn generate_application_state(state_path: &PathType, config: &AppConfig) -> AppState {
+    match StatePersistence::load_state(&state_path).await {
+        Ok(mut loaded_data) => {
+            log!(LogLevel::Info, "Loaded previous state data");
+            log!(LogLevel::Trace, "Previous state data: {:#?}", loaded_data);
+            loaded_data.is_active = false;
+            loaded_data.data = String::from("Initializing");
+            loaded_data.config.debug_mode = config.debug_mode;
+            loaded_data.event_counter = 0;
+            loaded_data.last_updated = current_timestamp();
+            loaded_data.config.log_level = config.log_level;
+            loaded_data.config.max_cpu_usage = config.max_cpu_usage;
+            loaded_data.config.max_ram_usage = config.max_ram_usage;
+            loaded_data.config.version = config.version.clone();
+            set_log_level(loaded_data.config.log_level);
+            loaded_data.error_log.clear();
+            update_state(&mut loaded_data, &state_path, None).await;
+            loaded_data
+        }
+        Err(e) => {
+            log!(LogLevel::Warn, "No previous state loaded, creating new one");
+            log!(LogLevel::Debug, "Error loading previous state: {}", e);
+            let mut state = AppState {
+                name: env!("CARGO_PKG_NAME").to_string(),
+                data: String::new(),
+                last_updated: current_timestamp(),
+                event_counter: 0,
+                is_active: false,
+                error_log: vec![],
+                config: config.clone(),
+                version: serde_json::from_str(&config.version)
+                    .expect("Failed to parse version data"),
+                system_application: false,
+            };
+            state.is_active = false;
+            state.data = String::from("Initializing in degraded state");
+            state.config.debug_mode = config.debug_mode;
+            state.last_updated = current_timestamp();
+            state.config.log_level = config.log_level;
+            state.config.max_cpu_usage = config.max_cpu_usage;
+            state.config.max_ram_usage = config.max_ram_usage;
+            state.event_counter = 0;
+            set_log_level(state.config.log_level);
+            state.error_log.clear();
+            update_state(&mut state, &state_path, None).await;
+
+            state
+        }
+    }
+} 
